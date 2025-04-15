@@ -22,8 +22,14 @@ int main() {
     player.body->x = player.pos.x;
     player.body->y = player.pos.y;
 
+    std::cout << windowWidth << "\n";
+    std::cout << windowWidth / 2.0 << "\n";
+
+    float centerX = windowWidth / 2.0;
+    float centerY = windowHeight / 2.0;
+
     // Create Rectangles.
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 500; ++i) {
         object* obj = new object;
 
         obj->pos.x = GetRandomValue(0, windowWidth);
@@ -46,10 +52,10 @@ int main() {
     }
 
     //Create rays.
-    for (int i = 0; i < 629; ++i) {
+    constexpr int rayAmount = 1200;
+    for (int i = 0; i < rayAmount; ++i) {
         newRay ray = {};
-        float angle = 0;
-        ray.rayAngle = angle + (i * 0.01);
+        ray.rayAngle = i * (PI * 2.0 / rayAmount);
         createRay(ray);
     }
 
@@ -98,12 +104,10 @@ int main() {
         }
 
         for (int i = 0; i < rays.size(); ++i) {
-            if (rays[i].collided || rays[i].outOfBounds) {
-                break;
-            }
             marchRay(rays[i], quadtree);
         }
 
+        DrawText(TextFormat("%i", rays.size()), 25, 50, 26, WHITE);
         DrawFPS(25, 25);
         EndDrawing();
     }
@@ -114,20 +118,30 @@ int main() {
 void createRay(newRay newRay) {
     newRay.rayOrigin = Vector2(windowWidth / 2.0, windowHeight / 2.0);
     newRay.rayDirection = Vector2Rotate(Vector2(1, 1), newRay.rayAngle);
-    newRay.oldPos = newRay.rayOrigin;
     newRay.newPos = newRay.rayOrigin;
+    newRay.finalPos = Vector2(-1, -1);
 
     rays.push_back(newRay);
 }
 
-void marchRay(newRay ray, quadTree quadTree) {
-    int stepAmount = 120;
+void marchRay(newRay &ray, quadTree &quadTree) {
+    Vector2 movedPos = Vector2Add(ray.rayOrigin, ray.rayDirection);
+
+    if (!quadTree::isSameQuad(quadTree::getQuad(player.pos, true), quadTree::getQuad(movedPos, false)) && ray.finalPos.x != -1) {
+        DrawLineEx(ray.rayOrigin, ray.newPos, 1, GREEN);
+        return;
+    }
+
+    int stepAmount = 350;
+    bool collided = false;
+
+    Vector2 oldPos = ray.rayOrigin;
 
     for (int i = 0; i < stepAmount; ++i) {
-        ray.newPos = Vector2Add(ray.oldPos, Vector2Scale(ray.rayDirection, 5.0));
+        ray.newPos = Vector2Add(oldPos, Vector2Scale(ray.rayDirection, 2));
 
         // Define a search range near the ray position.
-        float searchRadius = 35.0f;
+        float searchRadius = 25.0f;
         Rectangle searchArea = Rectangle(ray.newPos.x - searchRadius, ray.newPos.y - searchRadius,
             searchRadius * 2,searchRadius * 2
         );
@@ -136,45 +150,30 @@ void marchRay(newRay ray, quadTree quadTree) {
         std::vector<object*> nearby;
         quadTree.query(searchArea, nearby);
 
-        // Check only those objects./
+        // Check only those objects.
         for (int i = 0; i < nearby.size(); ++i) {
             if (CheckCollisionPointRec(ray.newPos, *nearby[i]->body)) {
-                ray.collided = true;
+                // std::cout << "Hit!" << std::endl;
+                collided = true;
                 break;
             }
         }
-
-        // for (int i = 0; i < objects.size(); ++i) {
-        //     float dist = Vector2DistanceSqr(ray.newPos, objects[i].center);
-        //     float maxDist = 35.0;
-        //
-        //     if (dist < maxDist * maxDist) {
-        //         if (CheckCollisionPointRec(ray.newPos, *objects[i].body)) {
-        //             ray.collided = true;
-        //             break;
-        //         }
-        //     }
-        // }
 
         if (Vector2Distance(ray.newPos, player.pos) <= 35.0) {
             if (CheckCollisionPointRec(ray.newPos, *player.body)) {
                 // std::cout << "Hit!" << std::endl;
-                ray.collided = true;
+                collided = true;
                 break;
             }
         }
 
-        if (ray.collided) {break;}
+        if (collided) {break;}
 
-        ray.oldPos = ray.newPos;
+        oldPos = ray.newPos;
     }
 
-    if (!ray.collided) {
-        ray.finalPos = ray.newPos;
-    }
-
+    ray.finalPos = ray.newPos;
     DrawLineEx(ray.rayOrigin, ray.newPos, 1, GREEN);
-    DrawRectangle(ray.finalPos.x - 2, ray.finalPos.y - 2, 4, 4, YELLOW);
 }
 
 quadTree::quadTree(Rectangle rec, int cap) {
@@ -206,31 +205,101 @@ void quadTree::subdivide() {
 void quadTree::insert(object* obj) {
     if (!CheckCollisionPointRec(obj->center, bounds)) return;
 
-    if (quadObjects.size() < capacity) {
-        quadObjects.push_back(obj);
-    } else {
-        if (!divided) subdivide();
+    quadTree* stack[128];
+    int stackIndex = 0;
 
-        ne->insert(obj);
-        nw->insert(obj);
-        se->insert(obj);
-        sw->insert(obj);
+    stack[stackIndex++] = this;
+
+    while (stackIndex > 0) {
+        quadTree* node = stack[--stackIndex];
+
+        if (!CheckCollisionPointRec(obj->center, node->bounds)) continue;
+
+        if (!node->divided) {
+            if (node->quadObjects.size() < node->capacity) {
+                node->quadObjects.push_back(obj);
+                continue;
+            }
+
+            node->subdivide();
+        }
+
+        stack[stackIndex++] = node->ne;
+        stack[stackIndex++] = node->nw;
+        stack[stackIndex++] = node->se;
+        stack[stackIndex++] = node->sw;
     }
 }
 
 void quadTree::query(Rectangle range, std::vector<object*>& found) {
     if (!CheckCollisionRecs(bounds, range)) return;
 
-    for (int i = 0; i < quadObjects.size(); ++i) {
-        if (CheckCollisionPointRec(quadObjects[i]->center, range)) {
-            found.push_back(quadObjects[i]);
+    quadTree* stack[64];
+    int stackIndex = 0;
+
+    stack[stackIndex++] = this;
+
+    while (stackIndex > 0) {
+        quadTree* node = stack[--stackIndex];
+
+        if (!CheckCollisionRecs(node->bounds, range)) continue;
+
+        for (int i = 0; i < node->quadObjects.size(); ++i) {
+            if (CheckCollisionPointRec(node->quadObjects[i]->center, range)) {
+                found.push_back(node->quadObjects[i]);
+            }
+        }
+
+        if (node->divided) {
+            stack[stackIndex++] = node->ne;
+            stack[stackIndex++] = node->nw;
+            stack[stackIndex++] = node->se;
+            stack[stackIndex++] = node->sw;
         }
     }
+}
 
-    if (divided) {
-        ne->query(range, found);
-        nw->query(range, found);
-        se->query(range, found);
-        sw->query(range, found);
+bool quadTree::isSameQuad(const int a, const int b) {
+    // Middle and same Quads.
+    if (a == b) {return true;}
+    if (a == 9 || b == 9) {return true;}
+
+    // Top side Quads.
+    if (a == 5 && b == 1 || a == 5 && b == 2) {return true;}
+    if (a == 1 && b == 5 || a == 2 && b == 5) {return true;}
+
+    // Bottom side Quads.
+    if (a == 6 && b == 4 || a == 6 && b == 3) {return true;}
+    if (a == 4 && b == 5 || a == 3 && b == 6) {return true;}
+
+    // Left side Quads.
+    if (a == 8 && b == 1 || a == 8 && b == 4) {return true;}
+    if (a == 1 && b == 8 || a == 4 && b == 8) {return true;}
+
+    // Ride side Quads.
+    if (a == 7 && b == 2 || a == 7 && b == 3) {return true;}
+    if (a == 2 && b == 7 || a == 3 && b == 7) {return true;}
+
+    return false;
+}
+
+int quadTree::getQuad(const Vector2 &pos, bool allowInBetween) {
+    const bool up = pos.y < windowHeight / 2.0;
+    const bool left = pos.x < windowWidth / 2.0;
+
+    if (allowInBetween) {
+        const bool closeToHorz = abs(pos.y - windowHeight / 2.0) < 80;
+        const bool closeToVert = abs(pos.x - windowWidth / 2.0) < 80;
+
+        if (closeToHorz && closeToVert) {return 9;}
+        if (closeToHorz && left) {return 8;}
+        if (closeToHorz) {return 7;}
+        if (closeToVert && up) {return 5;}
+        if (closeToVert) {return 6;}
     }
+
+    if (up && left) {return 1;}
+    if (up) {return 2;}
+    if (!left) {return 3;}
+    return 4;
 }

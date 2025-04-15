@@ -9,17 +9,17 @@
 #include "raymath.h"
 #include "vector"
 
+#include <thread>
+
 struct newRay {
     Vector2 rayOrigin = {};
+    Vector2 newPos = {};
     Vector2 rayDirection = {};
     Vector2 finalPos = {};
-    Vector2 oldPos = rayOrigin;
-    Vector2 newPos = rayOrigin;
 
     float rayAngle = 0.0;
     float totalDistance = 1.0;
 
-    bool collided = false;
     bool outOfBounds = false;
 };
 
@@ -58,6 +58,9 @@ struct quadTree {
     void insert(object* obj);
     void subdivide();
     void query(Rectangle range, std::vector<object*>& found);
+
+    static int getQuad(const Vector2 &pos, bool allowInBetween);
+    static bool isSameQuad(int a, int b);
 };
 
 inline player player;
@@ -67,9 +70,10 @@ inline int windowHeight = 1080;
 
 inline std::vector<object> objects = {};
 inline std::vector<newRay> rays = {};
+inline std::vector<std::thread> threads;
 
 int main();
-void marchRay(newRay ray, quadTree quadTree);
+void marchRay(newRay &ray, quadTree &quadTree);
 void createRay(newRay newRay);
 void drawRay(const newRay &ray);
 
