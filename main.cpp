@@ -28,12 +28,26 @@ int main() {
     float centerX = windowWidth / 2.0;
     float centerY = windowHeight / 2.0;
 
+    player.shader = LoadShader(nullptr, TextFormat("resources/shaders/glsl%i/ray.frag", 330));
+
     // Create Rectangles.
     for (int i = 0; i < 500; ++i) {
         object* obj = new object;
 
-        obj->pos.x = GetRandomValue(0, windowWidth);
-        obj->pos.y = GetRandomValue(0, windowHeight);
+        constexpr int radius = 500;
+
+        while (true) {
+            float posX = GetRandomValue(-radius, radius);
+            float posY = GetRandomValue(-radius, radius);
+
+            float distSqr = posX * posX + posY * posY;
+
+            if (distSqr < radius * radius && distSqr > pow(radius / 2.0, 2.0)) {
+                obj->pos.x = posX + centerX;
+                obj->pos.y = posY + centerY;
+                break;
+            }
+        }
 
         obj->size = Vector2(10, 10);
 
@@ -52,7 +66,7 @@ int main() {
     }
 
     //Create rays.
-    constexpr int rayAmount = 1200;
+    constexpr int rayAmount = 5000;
     for (int i = 0; i < rayAmount; ++i) {
         newRay ray = {};
         ray.rayAngle = i * (PI * 2.0 / rayAmount);
@@ -63,6 +77,13 @@ int main() {
     quadTree quadtree(Rectangle(0, 0, static_cast<float>(windowWidth), static_cast<float>(windowHeight)), 4);
     for (int i = 0; i < objects.size(); ++i) {
         quadtree.insert(&objects[i]);
+    }
+
+    unsigned int threadCount = std::thread::hardware_concurrency() / 2;
+    if (threadCount < 2) threadCount = 2; // fallback
+
+    for (int i = 0; i < threadCount; ++i) {
+        threads.emplace_back(processRayChunk, i, threadCount, std::ref(quadtree));
     }
 
     // Create global game loop.
@@ -104,7 +125,11 @@ int main() {
         }
 
         for (int i = 0; i < rays.size(); ++i) {
-            marchRay(rays[i], quadtree);
+            if (rays[i].drawRay) {
+                BeginShaderMode(player.shader);
+                DrawLineEx(rays[i].startPos, rays[i].finalPos, 1, GREEN);
+                EndShaderMode();
+            }
         }
 
         DrawText(TextFormat("%i", rays.size()), 25, 50, 26, WHITE);
@@ -112,12 +137,16 @@ int main() {
         EndDrawing();
     }
 
+    runThreads = false;
+    for (int i = 0; i < threadCount; ++i) {
+        threads[i].join();
+    }
     return 0;
 }
 
 void createRay(newRay newRay) {
     newRay.rayOrigin = Vector2(windowWidth / 2.0, windowHeight / 2.0);
-    newRay.rayDirection = Vector2Rotate(Vector2(1, 1), newRay.rayAngle);
+    newRay.rayDirection = Vector2Rotate(Vector2(1.0, 1.0), newRay.rayAngle);
     newRay.newPos = newRay.rayOrigin;
     newRay.finalPos = Vector2(-1, -1);
 
@@ -128,17 +157,17 @@ void marchRay(newRay &ray, quadTree &quadTree) {
     Vector2 movedPos = Vector2Add(ray.rayOrigin, ray.rayDirection);
 
     if (!quadTree::isSameQuad(quadTree::getQuad(player.pos, true), quadTree::getQuad(movedPos, false)) && ray.finalPos.x != -1) {
-        DrawLineEx(ray.rayOrigin, ray.newPos, 1, GREEN);
+        ray.drawRay = true;
         return;
     }
 
-    int stepAmount = 350;
+    int stepAmount = 1000;
     bool collided = false;
 
     Vector2 oldPos = ray.rayOrigin;
 
     for (int i = 0; i < stepAmount; ++i) {
-        ray.newPos = Vector2Add(oldPos, Vector2Scale(ray.rayDirection, 2));
+        ray.newPos = Vector2Add(oldPos, Vector2Scale(ray.rayDirection, 1.0));
 
         // Define a search range near the ray position.
         float searchRadius = 25.0f;
@@ -159,12 +188,10 @@ void marchRay(newRay &ray, quadTree &quadTree) {
             }
         }
 
-        if (Vector2Distance(ray.newPos, player.pos) <= 35.0) {
-            if (CheckCollisionPointRec(ray.newPos, *player.body)) {
-                // std::cout << "Hit!" << std::endl;
-                collided = true;
-                break;
-            }
+        if (CheckCollisionPointRec(ray.newPos, *player.body)) {
+            // std::cout << "Hit!" << std::endl;
+            collided = true;
+            break;
         }
 
         if (collided) {break;}
@@ -172,8 +199,9 @@ void marchRay(newRay &ray, quadTree &quadTree) {
         oldPos = ray.newPos;
     }
 
+    ray.drawRay = true;
     ray.finalPos = ray.newPos;
-    DrawLineEx(ray.rayOrigin, ray.newPos, 1, GREEN);
+    ray.startPos = ray.rayOrigin;
 }
 
 quadTree::quadTree(Rectangle rec, int cap) {
@@ -302,4 +330,17 @@ int quadTree::getQuad(const Vector2 &pos, bool allowInBetween) {
     if (up) {return 2;}
     if (!left) {return 3;}
     return 4;
+}
+
+void processRayChunk(int i, int threadCount, quadTree &quadTree) {
+    while (runThreads) {
+        int raysPerThread = rays.size() / threadCount;
+
+        int start = i * raysPerThread;
+        int end = (i == threadCount - 1) ? rays.size() : start + raysPerThread;
+
+        for (int j = start; j < end; ++j) {
+            marchRay(rays[j], quadTree);
+        }
+    }
 }

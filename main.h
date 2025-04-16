@@ -16,16 +16,20 @@ struct newRay {
     Vector2 newPos = {};
     Vector2 rayDirection = {};
     Vector2 finalPos = {};
+    Vector2 startPos = {};
 
     float rayAngle = 0.0;
     float totalDistance = 1.0;
 
+    bool drawRay = false;
     bool outOfBounds = false;
 };
 
 struct player {
     Vector2 pos = Vector2(1920 / 2, 1080 / 2);
     Vector2 velocity = {};
+
+    Shader shader{};
 
     float speed = 500.0;
     float acceleration = 10.0;
@@ -72,9 +76,11 @@ inline std::vector<object> objects = {};
 inline std::vector<newRay> rays = {};
 inline std::vector<std::thread> threads;
 
+inline bool runThreads = true;
+
 int main();
 void marchRay(newRay &ray, quadTree &quadTree);
 void createRay(newRay newRay);
-void drawRay(const newRay &ray);
+void processRayChunk(int i, int threadCount, quadTree &quadTree);
 
 #endif //MAIN_H
